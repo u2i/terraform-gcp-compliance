@@ -27,29 +27,29 @@ output "compliance_status" {
     iso27001 = local.iso27001_enabled ? {
       enabled  = true
       controls = try(module.iso27001_controls[0].iso27001_controls, {})
-    } : { enabled = false }
+    } : { enabled = false, controls = {} }
     
     soc2 = local.soc2_enabled ? {
       enabled  = true
       criteria = try(var.compliance_frameworks.soc2.trust_criteria, ["security"])
       controls = try(module.soc2_controls[0].soc2_controls, {})
-    } : { enabled = false }
+    } : { enabled = false, criteria = [], controls = {} }
     
     pci_dss = local.pci_dss_enabled ? {
       enabled = true
       level   = try(var.compliance_frameworks.pci_dss.level, 1)
-    } : { enabled = false }
+    } : { enabled = false, level = 0 }
     
     hipaa = local.hipaa_enabled ? {
       enabled     = true
       phi_present = try(var.compliance_frameworks.hipaa.phi_present, true)
-    } : { enabled = false }
+    } : { enabled = false, phi_present = false }
     
     gdpr = local.gdpr_enabled ? {
       enabled            = true
       data_controller    = try(var.compliance_frameworks.gdpr.data_controller, true)
       special_categories = try(var.compliance_frameworks.gdpr.special_categories, false)
-    } : { enabled = false }
+    } : { enabled = false, data_controller = false, special_categories = false }
   }
 }
 

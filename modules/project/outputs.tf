@@ -24,32 +24,32 @@ output "compliance_level" {
 output "compliance_status" {
   description = "Detailed compliance status for each framework"
   value = {
-    iso27001 = local.iso27001_enabled ? {
-      enabled  = true
-      controls = try(module.iso27001_controls[0].iso27001_controls, {})
-    } : { enabled = false, controls = {} }
+    iso27001 = {
+      enabled  = local.iso27001_enabled
+      controls = local.iso27001_enabled ? try(module.iso27001_controls[0].iso27001_controls, {}) : {}
+    }
     
-    soc2 = local.soc2_enabled ? {
-      enabled  = true
-      criteria = try(var.compliance_frameworks.soc2.trust_criteria, ["security"])
-      controls = try(module.soc2_controls[0].soc2_controls, {})
-    } : { enabled = false, criteria = [], controls = {} }
+    soc2 = {
+      enabled  = local.soc2_enabled
+      criteria = local.soc2_enabled ? try(var.compliance_frameworks.soc2.trust_criteria, ["security"]) : []
+      controls = local.soc2_enabled ? try(module.soc2_controls[0].soc2_controls, {}) : {}
+    }
     
-    pci_dss = local.pci_dss_enabled ? {
-      enabled = true
-      level   = try(var.compliance_frameworks.pci_dss.level, 1)
-    } : { enabled = false, level = 0 }
+    pci_dss = {
+      enabled = local.pci_dss_enabled
+      level   = local.pci_dss_enabled ? try(var.compliance_frameworks.pci_dss.level, 1) : 0
+    }
     
-    hipaa = local.hipaa_enabled ? {
-      enabled     = true
-      phi_present = try(var.compliance_frameworks.hipaa.phi_present, true)
-    } : { enabled = false, phi_present = false }
+    hipaa = {
+      enabled     = local.hipaa_enabled
+      phi_present = local.hipaa_enabled ? try(var.compliance_frameworks.hipaa.phi_present, true) : false
+    }
     
-    gdpr = local.gdpr_enabled ? {
-      enabled            = true
-      data_controller    = try(var.compliance_frameworks.gdpr.data_controller, true)
-      special_categories = try(var.compliance_frameworks.gdpr.special_categories, false)
-    } : { enabled = false, data_controller = false, special_categories = false }
+    gdpr = {
+      enabled            = local.gdpr_enabled
+      data_controller    = local.gdpr_enabled ? try(var.compliance_frameworks.gdpr.data_controller, true) : false
+      special_categories = local.gdpr_enabled ? try(var.compliance_frameworks.gdpr.special_categories, false) : false
+    }
   }
 }
 

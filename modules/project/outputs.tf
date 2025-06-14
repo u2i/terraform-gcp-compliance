@@ -102,9 +102,9 @@ output "dashboard_url" {
 output "evidence_storage" {
   description = "Evidence storage configuration for compliance audits"
   value = try(var.evidence_storage.enabled, true) ? {
-    bucket_name     = var.evidence_storage.bucket_name
-    retention_days  = var.evidence_storage.retention_days
-    storage_class   = var.evidence_storage.storage_class
+    bucket_name     = try(var.evidence_storage.bucket_name, "")
+    retention_days  = try(var.evidence_storage.retention_days, 2555)
+    storage_class   = try(var.evidence_storage.storage_class, "STANDARD")
   } : null
 }
 

@@ -1,5 +1,5 @@
-# SOC 2 Type II Compliance Controls
-# Implements Trust Services Criteria (TSC)
+# SOC 2 Type II Compliance Controls (Project Level)
+# Implements Trust Services Criteria at project level
 
 terraform {
   required_version = ">= 1.0"
@@ -27,19 +27,15 @@ variable "exception_principals" {
 variable "trust_criteria" {
   type    = list(string)
   default = ["security"]
-  # Options: security, availability, processing_integrity, confidentiality, privacy
 }
 
 locals {
-  # Determine which criteria are enabled
-  security_enabled              = contains(var.trust_criteria, "security")
-  availability_enabled          = contains(var.trust_criteria, "availability")
-  processing_integrity_enabled  = contains(var.trust_criteria, "processing_integrity")
-  confidentiality_enabled      = contains(var.trust_criteria, "confidentiality")
-  privacy_enabled              = contains(var.trust_criteria, "privacy")
+  security_enabled = contains(var.trust_criteria, "security")
+  availability_enabled = contains(var.trust_criteria, "availability")
+  confidentiality_enabled = contains(var.trust_criteria, "confidentiality")
 }
 
-# CC6.1 - Logical and Physical Access Controls
+# CC6.1 - Logical Access Controls
 resource "google_iam_deny_policy" "soc2_access_control" {
   count = local.security_enabled ? 1 : 0
   
@@ -52,24 +48,11 @@ resource "google_iam_deny_policy" "soc2_access_control" {
     
     deny_rule {
       denied_permissions = [
-        # Prevent unauthorized access modifications
-        "resourcemanager.projects.setIamPolicy",
-        "iam.serviceAccounts.setIamPolicy",
-        "iam.serviceAccounts.getAccessToken",
-        "iam.serviceAccounts.signBlob",
-        "iam.serviceAccounts.signJwt",
-        
-        # Prevent key management changes
-        "iam.serviceAccountKeys.create",
-        "iam.serviceAccountKeys.delete"
+        "iam.googleapis.com/serviceAccounts.getAccessToken",
+        "iam.googleapis.com/serviceAccounts.signBlob",
+        "iam.googleapis.com/serviceAccounts.signJwt",
+        "iam.googleapis.com/serviceAccountKeys.get"
       ]
-      
-      # Require MFA for these operations
-      denial_condition {
-        title       = "Require MFA"
-        description = "Multi-factor authentication required"
-        expression  = "!request.auth.access_levels.exists(l, l == 'mfa_verified')"
-      }
       
       denied_principals    = ["principalSet://goog/public:all"]
       exception_principals = var.exception_principals
@@ -77,7 +60,7 @@ resource "google_iam_deny_policy" "soc2_access_control" {
   }
 }
 
-# CC7.2 - System Monitoring
+# CC7.2 - System Monitoring (Simplified)
 resource "google_iam_deny_policy" "soc2_monitoring" {
   count = local.security_enabled ? 1 : 0
   
@@ -86,22 +69,12 @@ resource "google_iam_deny_policy" "soc2_monitoring" {
   display_name = "SOC 2 CC7.2 - System Monitoring"
   
   rules {
-    description = "Protect monitoring infrastructure per TSC CC7.2"
+    description = "Protect monitoring infrastructure"
     
     deny_rule {
       denied_permissions = [
-        # Protect monitoring configuration
-        "monitoring.alertPolicies.delete",
-        "monitoring.alertPolicies.update",
-        "monitoring.notificationChannels.delete",
-        "monitoring.uptimeCheckConfigs.delete",
-        "monitoring.dashboards.delete",
-        
-        # Protect logging configuration
-        "logging.sinks.delete",
-        "logging.sinks.update",
-        "logging.exclusions.create",
-        "logging.logMetrics.delete"
+        "logging.googleapis.com/exclusions.create",
+        "logging.googleapis.com/exclusions.update"
       ]
       
       denied_principals    = ["principalSet://goog/public:all"]
@@ -110,7 +83,7 @@ resource "google_iam_deny_policy" "soc2_monitoring" {
   }
 }
 
-# A1.2 - Availability Controls
+# A1.2 - Availability Controls (Simplified)
 resource "google_iam_deny_policy" "soc2_availability" {
   count = local.availability_enabled ? 1 : 0
   
@@ -119,25 +92,12 @@ resource "google_iam_deny_policy" "soc2_availability" {
   display_name = "SOC 2 A1.2 - Availability Controls"
   
   rules {
-    description = "Protect system availability per TSC A1.2"
+    description = "Protect system availability"
     
     deny_rule {
       denied_permissions = [
-        # Prevent service disruption
-        "compute.instances.delete",
-        "compute.instances.stop",
-        "container.clusters.delete",
-        "container.clusters.update",
-        
-        # Protect load balancers
-        "compute.backendServices.delete",
-        "compute.urlMaps.delete",
-        "compute.targetHttpProxies.delete",
-        "compute.targetHttpsProxies.delete",
-        
-        # Protect auto-scaling
-        "compute.autoscalers.delete",
-        "compute.autoscalers.update"
+        "compute.googleapis.com/instances.delete",
+        "compute.googleapis.com/instances.stop"
       ]
       
       # Only during maintenance windows
@@ -145,8 +105,8 @@ resource "google_iam_deny_policy" "soc2_availability" {
         title       = "Outside maintenance window"
         description = "Changes only allowed during maintenance"
         expression  = <<-EOT
-          !(request.time.getHours() >= 2 && request.time.getHours() <= 4 && 
-            request.time.getDayOfWeek() == 0)
+          !(request.time.getHours("UTC") >= 2 && request.time.getHours("UTC") <= 4 && 
+            request.time.getDayOfWeek("UTC") == 0)
         EOT
       }
       
@@ -156,7 +116,7 @@ resource "google_iam_deny_policy" "soc2_availability" {
   }
 }
 
-# C1.2 - Confidentiality Controls
+# C1.2 - Confidentiality Controls (Simplified)
 resource "google_iam_deny_policy" "soc2_confidentiality" {
   count = local.confidentiality_enabled ? 1 : 0
   
@@ -165,26 +125,19 @@ resource "google_iam_deny_policy" "soc2_confidentiality" {
   display_name = "SOC 2 C1.2 - Confidentiality Controls"
   
   rules {
-    description = "Protect confidential information per TSC C1.2"
+    description = "Protect confidential information"
     
     deny_rule {
       denied_permissions = [
-        # Prevent data exposure
-        "storage.objects.get",
-        "storage.objects.list",
-        "bigquery.tables.getData",
-        "bigquery.tables.export",
-        
-        # Prevent snapshot/backup access
-        "compute.snapshots.useReadOnly",
-        "compute.images.useReadOnly"
+        "storage.googleapis.com/objects.get",
+        "bigquery.googleapis.com/tables.getData"
       ]
       
-      # Block external access
+      # Block external IPs (simplified)
       denial_condition {
         title       = "External access blocked"
         description = "Prevent access from outside organization"
-        expression  = "!origin.ip.startsWith('10.') && !origin.ip.startsWith('172.16.')"
+        expression  = "!origin.ip.startsWith('10.') && !origin.ip.startsWith('172.16.') && !origin.ip.startsWith('192.168.')"
       }
       
       denied_principals    = ["principalSet://goog/public:all"]
@@ -193,80 +146,7 @@ resource "google_iam_deny_policy" "soc2_confidentiality" {
   }
 }
 
-# PI1.2 - Processing Integrity
-resource "google_iam_deny_policy" "soc2_processing_integrity" {
-  count = local.processing_integrity_enabled ? 1 : 0
-  
-  parent       = var.project_resource
-  name         = "soc2-pi1-2-processing-integrity"
-  display_name = "SOC 2 PI1.2 - Processing Integrity"
-  
-  rules {
-    description = "Ensure processing integrity per TSC PI1.2"
-    
-    deny_rule {
-      denied_permissions = [
-        # Prevent data modification
-        "bigquery.tables.updateData",
-        "bigquery.tables.deleteData",
-        "storage.objects.update",
-        
-        # Prevent pipeline changes
-        "dataflow.jobs.cancel",
-        "composer.environments.update",
-        "cloudfunctions.functions.update"
-      ]
-      
-      # Require change ticket
-      denial_condition {
-        title       = "Require change ticket"
-        description = "Changes require approved ticket"
-        expression  = "!request.headers['x-change-ticket'].matches('^CHG[0-9]+$')"
-      }
-      
-      denied_principals    = ["principalSet://goog/public:all"]
-      exception_principals = var.exception_principals
-    }
-  }
-}
-
-# P3.2 - Privacy Controls (GDPR overlap)
-resource "google_iam_deny_policy" "soc2_privacy" {
-  count = local.privacy_enabled ? 1 : 0
-  
-  parent       = var.project_resource
-  name         = "soc2-p3-2-privacy"
-  display_name = "SOC 2 P3.2 - Privacy Controls"
-  
-  rules {
-    description = "Protect personal information per TSC P3.2"
-    
-    deny_rule {
-      denied_permissions = [
-        # Prevent PII access
-        "dlp.inspectFindings.list",
-        "healthcare.fhirStores.read",
-        "healthcare.dicomStores.read",
-        
-        # Prevent PII export
-        "bigquery.tables.export",
-        "storage.objects.create"
-      ]
-      
-      # Restrict to privacy officers
-      denial_condition {
-        title       = "Privacy officer only"
-        description = "Only privacy officers can access PII"
-        expression  = "!('privacy-officer' in request.auth.claims.groups)"
-      }
-      
-      denied_principals    = ["principalSet://goog/public:all"]
-      exception_principals = var.exception_principals
-    }
-  }
-}
-
-# Create validation rules for SOC 2 attestation
+# Monitoring for SOC 2 violations
 resource "google_monitoring_alert_policy" "soc2_violations" {
   count = local.security_enabled ? 1 : 0
   
@@ -287,8 +167,6 @@ resource "google_monitoring_alert_policy" "soc2_violations" {
     }
   }
   
-  notification_channels = [] # Configure based on var.monitoring_config
-  
   documentation {
     content = "SOC 2 compliance control violation detected. Review the audit logs for details."
   }
@@ -298,12 +176,10 @@ output "soc2_controls" {
   value = {
     enabled_criteria = var.trust_criteria
     policies_created = {
-      access_control       = local.security_enabled
-      monitoring          = local.security_enabled
-      availability        = local.availability_enabled
-      confidentiality     = local.confidentiality_enabled
-      processing_integrity = local.processing_integrity_enabled
-      privacy             = local.privacy_enabled
+      access_control = local.security_enabled
+      monitoring = local.security_enabled
+      availability = local.availability_enabled
+      confidentiality = local.confidentiality_enabled
     }
   }
 }

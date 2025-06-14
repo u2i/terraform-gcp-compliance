@@ -1,5 +1,5 @@
-# ISO 27001:2022 Compliance Controls
-# Implements information security management system requirements
+# ISO 27001 Compliance Controls (Project Level)
+# Implements a subset of controls that work at project level
 
 terraform {
   required_version = ">= 1.0"
@@ -24,46 +24,27 @@ variable "exception_principals" {
   type = list(string)
 }
 
-variable "data_classification" {
-  type    = string
-  default = "internal"
-}
-
-variable "emergency_override" {
+variable "enabled" {
   type    = bool
-  default = false
+  default = true
 }
 
-locals {
-  # Stricter controls for higher classification
-  is_high_security = var.data_classification == "confidential" || var.data_classification == "restricted"
-}
-
-# A.9 - Access Control
+# A.9 - Access Control (Simplified)
 resource "google_iam_deny_policy" "iso27001_access_control" {
-  count = var.emergency_override ? 0 : 1
+  count = var.enabled ? 1 : 0
   
   parent       = var.project_resource
   name         = "iso27001-a9-access-control"
   display_name = "ISO 27001 A.9 - Access Control"
   
   rules {
-    description = "Enforce access control requirements per ISO 27001 A.9"
+    description = "Restrict service account impersonation"
     
     deny_rule {
       denied_permissions = [
-        # A.9.1 - Business requirements for access control
-        "resourcemanager.projects.setIamPolicy",
-        "iam.serviceAccounts.setIamPolicy",
-        
-        # A.9.2 - User access management
-        "iam.serviceAccounts.create",
-        "iam.serviceAccountKeys.create",
-        "iam.serviceAccountKeys.delete",
-        
-        # A.9.4 - Access to systems and applications
-        "compute.instances.setMetadata",
-        "compute.projects.setCommonInstanceMetadata"
+        "iam.googleapis.com/serviceAccounts.getAccessToken",
+        "iam.googleapis.com/serviceAccounts.signBlob",
+        "iam.googleapis.com/serviceAccounts.signJwt"
       ]
       
       denied_principals    = ["principalSet://goog/public:all"]
@@ -72,35 +53,22 @@ resource "google_iam_deny_policy" "iso27001_access_control" {
   }
 }
 
-# A.10 - Cryptography
+# A.10 - Cryptography (Simplified)
 resource "google_iam_deny_policy" "iso27001_cryptography" {
-  count = var.emergency_override ? 0 : 1
+  count = var.enabled ? 1 : 0
   
   parent       = var.project_resource
   name         = "iso27001-a10-cryptography"
-  display_name = "ISO 27001 A.10 - Cryptography"
+  display_name = "ISO 27001 A.10 - Cryptographic Controls"
   
   rules {
-    description = "Enforce cryptographic controls per ISO 27001 A.10"
+    description = "Protect cryptographic operations"
     
     deny_rule {
       denied_permissions = [
-        # A.10.1 - Cryptographic controls
-        "cloudkms.cryptoKeys.create",
-        "cloudkms.cryptoKeys.update",
-        "cloudkms.cryptoKeyVersions.destroy",
-        
-        # Prevent disabling encryption
-        "compute.disks.create",
-        "storage.buckets.create"
+        "cloudkms.googleapis.com/cryptoKeyVersions.destroy",
+        "cloudkms.googleapis.com/cryptoKeys.update"
       ]
-      
-      # Only allow with proper encryption
-      denial_condition {
-        title       = "Require encryption"
-        description = "Resources must be encrypted"
-        expression  = "!resource.labels.encryption_enabled"
-      }
       
       denied_principals    = ["principalSet://goog/public:all"]
       exception_principals = var.exception_principals
@@ -108,67 +76,32 @@ resource "google_iam_deny_policy" "iso27001_cryptography" {
   }
 }
 
-# A.12 - Operations Security
+# A.12 - Operations Security (Simplified)
 resource "google_iam_deny_policy" "iso27001_operations" {
-  count = var.emergency_override ? 0 : 1
+  count = var.enabled ? 1 : 0
   
   parent       = var.project_resource
   name         = "iso27001-a12-operations"
   display_name = "ISO 27001 A.12 - Operations Security"
   
   rules {
-    description = "Enforce operations security per ISO 27001 A.12"
+    description = "Protect critical operations"
     
     deny_rule {
       denied_permissions = [
-        # A.12.1 - Operational procedures
-        "compute.instances.delete",
-        "container.clusters.delete",
-        
-        # A.12.4 - Logging and monitoring
-        "logging.sinks.delete",
-        "logging.sinks.update",
-        "monitoring.alertPolicies.delete",
-        
-        # A.12.6 - Technical vulnerability management
-        "compute.securityPolicies.delete",
-        "compute.firewalls.delete"
+        "storage.googleapis.com/objects.delete",
+        "bigquery.googleapis.com/tables.delete",
+        "bigquery.googleapis.com/datasets.delete"
       ]
       
-      denied_principals    = ["principalSet://goog/public:all"]
-      exception_principals = var.exception_principals
-    }
-  }
-}
-
-# A.13 - Communications Security
-resource "google_iam_deny_policy" "iso27001_communications" {
-  count = !var.emergency_override && local.is_high_security ? 1 : 0
-  
-  parent       = var.project_resource
-  name         = "iso27001-a13-communications"
-  display_name = "ISO 27001 A.13 - Communications Security"
-  
-  rules {
-    description = "Enforce communications security per ISO 27001 A.13"
-    
-    deny_rule {
-      denied_permissions = [
-        # A.13.1 - Network security management
-        "compute.networks.delete",
-        "compute.subnetworks.delete",
-        "compute.routers.delete",
-        
-        # A.13.2 - Information transfer
-        "storage.objects.create",
-        "bigquery.tables.export"
-      ]
-      
-      # Block external transfers
+      # Only during business hours
       denial_condition {
-        title       = "Internal only"
-        description = "Block external data transfers"
-        expression  = "destination.ip != '10.0.0.0/8' && destination.ip != '172.16.0.0/12'"
+        title       = "Business hours only"
+        description = "Destructive operations only during business hours"
+        expression  = <<-EOT
+          request.time.getHours("America/New_York") < 6 ||
+          request.time.getHours("America/New_York") > 20
+        EOT
       }
       
       denied_principals    = ["principalSet://goog/public:all"]
@@ -177,108 +110,49 @@ resource "google_iam_deny_policy" "iso27001_communications" {
   }
 }
 
-# A.14 - System Development
-resource "google_iam_deny_policy" "iso27001_development" {
-  count = var.emergency_override ? 0 : 1
+# Monitoring for ISO 27001 violations
+resource "google_monitoring_alert_policy" "iso27001_violations" {
+  count = var.enabled ? 1 : 0
   
-  parent       = var.project_resource
-  name         = "iso27001-a14-development"
-  display_name = "ISO 27001 A.14 - System Development"
+  project      = var.project_id
+  display_name = "ISO 27001 Deny Policy Violations"
+  combiner     = "OR"
   
-  rules {
-    description = "Enforce secure development per ISO 27001 A.14"
+  conditions {
+    display_name = "Deny policy violation detected"
     
-    deny_rule {
-      denied_permissions = [
-        # A.14.2 - Security in development
-        "cloudfunctions.functions.create",
-        "cloudfunctions.functions.update",
-        "run.services.create",
-        "run.services.update",
-        
-        # A.14.3 - Test data
-        "bigquery.tables.getData"
-      ]
-      
-      # Require security review
-      denial_condition {
-        title       = "Security review required"
-        description = "Deployments require security review"
-        expression  = "!request.headers['x-security-review'].matches('^SEC-[0-9]+$')"
-      }
-      
-      denied_principals    = ["principalSet://goog/public:all"]
-      exception_principals = var.exception_principals
+    condition_matched_log {
+      filter = <<-EOT
+        protoPayload.@type="type.googleapis.com/google.cloud.audit.AuditLog"
+        AND protoPayload.status.code=7
+        AND protoPayload.status.message=~"Denied by IAM deny policy"
+        AND protoPayload.response.error.details.violations.errorMessage=~"iso27001-"
+      EOT
     }
   }
-}
-
-# A.16 - Incident Management
-resource "google_iam_deny_policy" "iso27001_incident" {
-  count = var.emergency_override ? 0 : 1
   
-  parent       = var.project_resource
-  name         = "iso27001-a16-incident"
-  display_name = "ISO 27001 A.16 - Incident Management"
-  
-  rules {
-    description = "Protect incident response capabilities per ISO 27001 A.16"
-    
-    deny_rule {
-      denied_permissions = [
-        # Protect forensic capabilities
-        "logging.logs.delete",
-        "compute.snapshots.delete",
-        "storage.objects.delete",
-        
-        # Protect incident response tools
-        "monitoring.alertPolicies.update",
-        "monitoring.notificationChannels.delete"
-      ]
-      
-      denied_principals    = ["principalSet://goog/public:all"]
-      exception_principals = var.exception_principals
-    }
-  }
-}
-
-# A.18 - Compliance
-resource "google_iam_deny_policy" "iso27001_compliance" {
-  count = var.emergency_override ? 0 : 1
-  
-  parent       = var.project_resource
-  name         = "iso27001-a18-compliance"
-  display_name = "ISO 27001 A.18 - Compliance"
-  
-  rules {
-    description = "Maintain compliance capabilities per ISO 27001 A.18"
-    
-    deny_rule {
-      denied_permissions = [
-        # A.18.1 - Compliance with legal requirements
-        "resourcemanager.projects.undelete",
-        "cloudkms.cryptoKeyVersions.restore",
-        
-        # A.18.2 - Information security reviews
-        "securitycenter.findings.setState",
-        "cloudasset.assets.delete"
-      ]
-      
-      denied_principals    = ["principalSet://goog/public:all"]
-      exception_principals = var.exception_principals
-    }
+  documentation {
+    content = "ISO 27001 compliance control violation detected. Review the audit logs for details."
   }
 }
 
 output "iso27001_controls" {
   value = {
-    emergency_override = var.emergency_override
-    access_control     = !var.emergency_override
-    cryptography       = !var.emergency_override
-    operations         = !var.emergency_override
-    communications     = !var.emergency_override && local.is_high_security
-    development        = !var.emergency_override
-    incident_response  = !var.emergency_override
-    compliance         = !var.emergency_override
+    access_control = {
+      enabled = var.enabled
+      policy_id = var.enabled ? google_iam_deny_policy.iso27001_access_control[0].id : null
+    }
+    cryptography = {
+      enabled = var.enabled
+      policy_id = var.enabled ? google_iam_deny_policy.iso27001_cryptography[0].id : null
+    }
+    operations = {
+      enabled = var.enabled
+      policy_id = var.enabled ? google_iam_deny_policy.iso27001_operations[0].id : null
+    }
+    monitoring = {
+      enabled = var.enabled
+      alert_policy_id = var.enabled ? google_monitoring_alert_policy.iso27001_violations[0].id : null
+    }
   }
 }

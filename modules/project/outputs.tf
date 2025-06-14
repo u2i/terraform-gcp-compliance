@@ -31,8 +31,8 @@ output "compliance_status" {
     
     soc2 = {
       enabled  = local.soc2_enabled
-      criteria = local.soc2_enabled ? try(var.compliance_frameworks.soc2.trust_criteria, ["security"]) : []
-      controls = local.soc2_enabled ? try(module.soc2_controls[0].soc2_controls, {}) : {}
+      criteria = local.soc2_enabled ? try(module.soc2_controls[0].soc2_controls.enabled_criteria, ["security"]) : []
+      controls = local.soc2_enabled ? try(module.soc2_controls[0].soc2_controls.policies_created, {}) : {}
     }
     
     pci_dss = {

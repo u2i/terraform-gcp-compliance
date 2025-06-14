@@ -272,6 +272,7 @@ resource "google_monitoring_alert_policy" "soc2_violations" {
   
   project      = var.project_id
   display_name = "SOC 2 Deny Policy Violations"
+  combiner     = "OR"
   
   conditions {
     display_name = "Deny policy violation detected"

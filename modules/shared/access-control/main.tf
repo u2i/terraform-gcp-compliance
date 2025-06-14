@@ -269,6 +269,7 @@ resource "google_iam_deny_policy" "time_based_access" {
 resource "google_monitoring_alert_policy" "access_review_reminder" {
   project      = var.project_id
   display_name = "Shared - Access Review Reminder"
+  combiner     = "OR"
   
   conditions {
     display_name = "Quarterly access review due"

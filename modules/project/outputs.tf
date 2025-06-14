@@ -101,7 +101,7 @@ output "dashboard_url" {
 
 output "evidence_storage" {
   description = "Evidence storage configuration for compliance audits"
-  value = var.evidence_storage.enabled ? {
+  value = try(var.evidence_storage.enabled, true) ? {
     bucket_name     = var.evidence_storage.bucket_name
     retention_days  = var.evidence_storage.retention_days
     storage_class   = var.evidence_storage.storage_class
@@ -113,7 +113,13 @@ output "compliance_report" {
   value = {
     generated_at = timestamp()
     project_id   = var.project_id
-    frameworks   = [for k, v in local.enabled_frameworks : k if v]
+    frameworks   = compact([
+      local.iso27001_enabled ? "iso27001" : "",
+      local.soc2_enabled ? "soc2" : "",
+      local.pci_dss_enabled ? "pci_dss" : "",
+      local.hipaa_enabled ? "hipaa" : "",
+      local.gdpr_enabled ? "gdpr" : ""
+    ])
     controls = {
       total_policies = sum([
         local.iso27001_enabled ? 7 : 0,
@@ -144,7 +150,7 @@ output "implementation_notes" {
     break_glass_configured = local.has_break_glass_group
     workload_identity_configured = length(var.compliance_exceptions.workload_identity_pools) > 0
     monitoring_enabled = var.monitoring_config.enable_compliance_dashboard
-    evidence_collection_enabled = var.evidence_storage.enabled
+    evidence_collection_enabled = try(var.evidence_storage.enabled, true)
     frameworks_requiring_attestation = compact([
       local.iso27001_enabled ? "ISO 27001 - Annual audit required" : "",
       local.soc2_enabled ? "SOC 2 - Type II audit required" : "",

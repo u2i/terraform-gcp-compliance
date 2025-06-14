@@ -187,20 +187,20 @@ variable "integrations" {
       provider     = string # splunk, datadog, elastic, chronicle
       endpoint     = string
       api_key_secret = string
-    }), { enabled = false })
+    }))
     
     ticketing = optional(object({
       enabled  = bool
       provider = string # servicenow, jira, github
       endpoint = string
       project_key = string
-    }), { enabled = false })
+    }))
     
     vault = optional(object({
       enabled  = bool
       provider = string # hashicorp, google_secret_manager
       endpoint = string
-    }), { enabled = false })
+    }))
   })
   default = {}
 }

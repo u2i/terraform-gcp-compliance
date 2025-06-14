@@ -1,0 +1,365 @@
+name: Deploy Compliance Controls
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'deployments/**'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'deployments/**'
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Deployment target (e.g., projects/my-project)'
+        required: true
+        type: string
+      emergency_override:
+        description: 'Emergency override (use with extreme caution)'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  TF_VERSION: '1.9.1'
+  TF_IN_AUTOMATION: 'true'
+
+jobs:
+  detect-changes:
+    name: Detect Changed Deployments
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+      has-changes: ${{ steps.set-matrix.outputs.has-changes }}
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Detect changes
+      id: set-matrix
+      run: |
+        if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+          # Manual trigger - use provided target
+          echo "matrix={\"deployment\":[\"${{ github.event.inputs.target }}\"]}" >> $GITHUB_OUTPUT
+          echo "has-changes=true" >> $GITHUB_OUTPUT
+        else
+          # Automatic trigger - detect changed files
+          CHANGED_DIRS=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} | \
+            grep '^deployments/' | \
+            cut -d'/' -f1-3 | \
+            sort -u | \
+            jq -R -s -c 'split("\n")[:-1] | map(select(length > 0)) | {deployment: .}')
+          
+          if [ "$CHANGED_DIRS" == '{"deployment":[]}' ]; then
+            echo "has-changes=false" >> $GITHUB_OUTPUT
+            echo "matrix={\"deployment\":[]}" >> $GITHUB_OUTPUT
+          else
+            echo "has-changes=true" >> $GITHUB_OUTPUT
+            echo "matrix=$CHANGED_DIRS" >> $GITHUB_OUTPUT
+          fi
+        fi
+
+  validate:
+    name: Validate Configuration
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.has-changes == 'true'
+    
+    strategy:
+      matrix: ${{ fromJson(needs.detect-changes.outputs.matrix) }}
+      fail-fast: false
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ env.TF_VERSION }}
+    
+    - name: Terraform Format Check
+      run: terraform fmt -check -recursive
+      working-directory: ${{ matrix.deployment }}
+    
+    - name: Terraform Init
+      run: terraform init -backend=false
+      working-directory: ${{ matrix.deployment }}
+    
+    - name: Terraform Validate
+      run: terraform validate
+      working-directory: ${{ matrix.deployment }}
+    
+    - name: TFLint
+      uses: terraform-linters/setup-tflint@v4
+      with:
+        tflint_version: latest
+    
+    - name: Run TFLint
+      run: |
+        tflint --init
+        tflint
+      working-directory: ${{ matrix.deployment }}
+
+  plan:
+    name: Plan Deployment
+    runs-on: ubuntu-latest
+    needs: [detect-changes, validate]
+    if: needs.detect-changes.outputs.has-changes == 'true'
+    
+    strategy:
+      matrix: ${{ fromJson(needs.detect-changes.outputs.matrix) }}
+      fail-fast: false
+    
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v2
+      with:
+        workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+        service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+    
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ env.TF_VERSION }}
+    
+    - name: Terraform Init
+      run: terraform init
+      working-directory: ${{ matrix.deployment }}
+    
+    - name: Check Emergency Override
+      if: github.event_name == 'workflow_dispatch' && github.event.inputs.emergency_override == 'true'
+      run: |
+        echo "⚠️ EMERGENCY OVERRIDE REQUESTED ⚠️"
+        echo "This will disable all compliance controls!"
+        echo "Reason must be documented in the deployment configuration."
+    
+    - name: Terraform Plan
+      id: plan
+      run: |
+        if [ "${{ github.event.inputs.emergency_override }}" == "true" ]; then
+          terraform plan -out=tfplan \
+            -var="emergency_override=true" \
+            -var="emergency_override_reason=Emergency deployment via GitHub Actions - ${{ github.actor }} - ${{ github.run_id }}"
+        else
+          terraform plan -out=tfplan
+        fi
+      working-directory: ${{ matrix.deployment }}
+      continue-on-error: true
+    
+    - name: Upload Plan
+      uses: actions/upload-artifact@v4
+      with:
+        name: tfplan-${{ hashFiles(matrix.deployment) }}
+        path: ${{ matrix.deployment }}/tfplan
+        retention-days: 7
+    
+    - name: Comment PR
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const output = `#### Terraform Plan 📖 \`${{ matrix.deployment }}\`
+          #### Terraform Format and Style 🖌 \`${{ steps.fmt.outcome }}\`
+          #### Terraform Initialization ⚙️ \`${{ steps.init.outcome }}\`
+          #### Terraform Validation 🤖 \`${{ steps.validate.outcome }}\`
+          #### Terraform Plan 📖 \`${{ steps.plan.outcome }}\`
+          
+          <details><summary>Show Plan</summary>
+          
+          \`\`\`terraform
+          ${{ steps.plan.outputs.stdout }}
+          \`\`\`
+          
+          </details>
+          
+          *Pushed by: @${{ github.actor }}, Action: \`${{ github.event_name }}\`*`;
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: output
+          })
+
+  deploy:
+    name: Deploy Changes
+    runs-on: ubuntu-latest
+    needs: [detect-changes, plan]
+    if: |
+      needs.detect-changes.outputs.has-changes == 'true' &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main'
+    
+    strategy:
+      matrix: ${{ fromJson(needs.detect-changes.outputs.matrix) }}
+      fail-fast: false
+      max-parallel: 2  # Limit concurrent deployments
+    
+    permissions:
+      contents: read
+      id-token: write
+    
+    environment:
+      name: production
+      url: https://console.cloud.google.com/iam-admin/deny
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v2
+      with:
+        workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+        service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+    
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ env.TF_VERSION }}
+    
+    - name: Download Plan
+      uses: actions/download-artifact@v4
+      with:
+        name: tfplan-${{ hashFiles(matrix.deployment) }}
+        path: ${{ matrix.deployment }}
+    
+    - name: Terraform Init
+      run: terraform init
+      working-directory: ${{ matrix.deployment }}
+    
+    - name: Terraform Apply
+      run: terraform apply tfplan
+      working-directory: ${{ matrix.deployment }}
+    
+    - name: Validate Deployment
+      run: |
+        PROJECT_ID=$(terraform output -raw project_id 2>/dev/null || echo "unknown")
+        echo "Validating deployment for project: $PROJECT_ID"
+        
+        # Check deny policies
+        gcloud iam deny-policies list --project="$PROJECT_ID" --format=json > deny-policies.json
+        
+        # Check audit logging
+        gcloud projects get-iam-policy "$PROJECT_ID" --format=json > iam-policy.json
+        
+        # Basic validation
+        if [ $(jq length deny-policies.json) -eq 0 ]; then
+          echo "⚠️ Warning: No deny policies found!"
+        else
+          echo "✅ Deny policies created: $(jq length deny-policies.json)"
+        fi
+      working-directory: ${{ matrix.deployment }}
+      continue-on-error: true
+    
+    - name: Generate Compliance Report
+      run: |
+        terraform output -json > compliance-report.json
+        echo "### Compliance Deployment Report" > report.md
+        echo "**Deployment**: ${{ matrix.deployment }}" >> report.md
+        echo "**Timestamp**: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> report.md
+        echo "**Deployed by**: ${{ github.actor }}" >> report.md
+        echo "" >> report.md
+        
+        # Extract key information
+        if [ -f compliance-report.json ]; then
+          echo "**Enabled Frameworks**:" >> report.md
+          jq -r '.enabled_frameworks.value | to_entries[] | select(.value == true) | "- \(.key)"' compliance-report.json >> report.md || true
+          echo "" >> report.md
+          
+          echo "**Compliance Level**: $(jq -r '.compliance_level.value // "unknown"' compliance-report.json)" >> report.md
+          echo "**Dashboard URL**: $(jq -r '.dashboard_url.value // "N/A"' compliance-report.json)" >> report.md
+        fi
+      working-directory: ${{ matrix.deployment }}
+    
+    - name: Upload Report
+      uses: actions/upload-artifact@v4
+      with:
+        name: compliance-report-${{ hashFiles(matrix.deployment) }}
+        path: |
+          ${{ matrix.deployment }}/compliance-report.json
+          ${{ matrix.deployment }}/report.md
+          ${{ matrix.deployment }}/deny-policies.json
+          ${{ matrix.deployment }}/iam-policy.json
+        retention-days: 90
+
+  notify:
+    name: Notify Completion
+    runs-on: ubuntu-latest
+    needs: [detect-changes, deploy]
+    if: always() && needs.detect-changes.outputs.has-changes == 'true'
+    
+    steps:
+    - name: Send Notification
+      run: |
+        if [ "${{ needs.deploy.result }}" == "success" ]; then
+          STATUS="✅ Success"
+          COLOR="good"
+        else
+          STATUS="❌ Failed"
+          COLOR="danger"
+        fi
+        
+        # Send notification to Slack/Teams/etc
+        echo "Deployment Status: $STATUS"
+        echo "Deployments: ${{ needs.detect-changes.outputs.matrix }}"
+        
+        # Example: Send to Slack
+        # curl -X POST ${{ secrets.SLACK_WEBHOOK }} \
+        #   -H 'Content-type: application/json' \
+        #   -d "{\"text\":\"Compliance Deployment $STATUS\",\"color\":\"$COLOR\"}"
+
+  compliance-check:
+    name: Post-Deployment Compliance Check
+    runs-on: ubuntu-latest
+    needs: [detect-changes, deploy]
+    if: needs.deploy.result == 'success'
+    
+    permissions:
+      contents: read
+      id-token: write
+      issues: write
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v2
+      with:
+        workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+        service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+    
+    - name: Run Compliance Validation
+      run: |
+        export GCP_ORG_ID="${{ secrets.GCP_ORG_ID }}"
+        export BREAK_GLASS_GROUP="${{ secrets.BREAK_GLASS_GROUP }}"
+        ./ci/validate_compliance_integration.sh || true
+    
+    - name: Create Issue if Non-Compliant
+      if: failure()
+      uses: actions/github-script@v7
+      with:
+        script: |
+          github.rest.issues.create({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            title: 'Compliance Validation Failed',
+            body: 'The post-deployment compliance check failed. Please review the logs and fix any issues.',
+            labels: ['compliance', 'automated']
+          })

@@ -1,0 +1,57 @@
+name: Validate Terraform
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: 1.9.1
+    
+    - name: Terraform Format Check
+      run: terraform fmt -check -recursive
+    
+    - name: Validate ISO 27001 Module
+      working-directory: modules/frameworks/iso27001
+      run: |
+        terraform init -backend=false
+        terraform validate
+    
+    - name: Validate SOC 2 Module
+      working-directory: modules/frameworks/soc2
+      run: |
+        terraform init -backend=false
+        terraform validate
+    
+    - name: Validate Project Module
+      working-directory: modules/project
+      run: |
+        terraform init -backend=false
+        terraform validate
+    
+    - name: TFLint
+      uses: terraform-linters/setup-tflint@v4
+      with:
+        tflint_version: latest
+    
+    - name: Run TFLint
+      run: |
+        tflint --init
+        tflint --recursive
+    
+    - name: Checkov Security Scan
+      uses: bridgecrewio/checkov-action@master
+      with:
+        directory: .
+        framework: terraform
+        quiet: true

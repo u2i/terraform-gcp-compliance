@@ -142,8 +142,6 @@ module "iso27001_controls" {
   project_id           = var.project_id
   project_resource     = local.project_resource
   exception_principals = local.exception_principals
-  data_classification  = var.data_classification
-  emergency_override   = var.emergency_override
   
   depends_on = [google_project_service.compliance_apis]
 }
@@ -219,7 +217,6 @@ module "data_protection" {
   project_resource     = local.project_resource
   exception_principals = local.exception_principals
   compliance_level     = local.compliance_level
-  data_classification  = var.data_classification
   data_residency      = var.data_residency
   security_controls   = var.security_controls.data_protection
   
